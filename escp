@@ -1,0 +1,116 @@
+#!/usr/bin/expect
+#https://www.tcl.tk/man/tcl8.5/TclCmd/eval.html
+
+if { [info exists ::env(PASS_PATH)] == 1 } {
+        set V_PASS_PATH $::env(PASS_PATH)
+} else {
+        puts "Path for reading data from pass-utility is not setteg in PASS_PATH env-var; Exiting"
+        exit 1
+}
+
+if { [info exists ::env(SOURCE_OS_USER)] == 1 } {
+	set V_SOURCE_OS_USER $::env(SOURCE_OS_USER)
+} else {
+	set V_SOURCE_OS_USER=""
+}
+
+if { [info exists ::env(SOURCE_HOST_NAME)] == 1 } {
+	set V_SOURCE_HOST_NAME $::env(SOURCE_HOST_NAME)
+} else {
+	set V_SOURCE_HOST_NAME ""
+}
+
+if { [info exists ::env(SOURCE_FILE)] == 1 } {
+        set V_SOURCE_FILE $::env(SOURCE_FILE)
+} else {
+        set V_SOURCE_FILE ""
+}
+
+if { [info exists ::env(TARGET_OS_USER)] == 1 } {
+        set V_TARGET_OS_USER $::env(TARGET_OS_USER)
+} else {
+        set V_TARGET_OS_USER ""
+}
+
+if { [info exists ::env(TARGET_HOST_NAME)] == 1 } {
+        set V_TARGET_HOST_NAME $::env(TARGET_HOST_NAME)
+} else {
+        set V_TARGET_HOST_NAME ""
+}
+
+if { [info exists ::env(TARGET_FILE)] == 1 } {
+        set V_TARGET_FILE $::env(TARGET_FILE)
+} else {
+        set V_TARGET_FILE ""
+}
+
+set V_SCPOPTION "-4 -o Compression=yes -o ServerAliveCountMax=5 -o ServerAliveInterval=15 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+puts [format "%s\t%s" "PASS_PATH" $V_PASS_PATH ]
+puts [format "%s\t%s" "SOURCE_OS_USER" $V_SOURCE_OS_USER ]
+puts [format "%s\t%s" "SOURCE_HOST" $V_SOURCE_HOST_NAME ]
+puts [format "%s\t%s" "SOURCE_FILE" $V_SOURCE_FILE ]
+puts [format "%s\t%s" "TARGET_OS_USER" $V_TARGET_OS_USER ]
+puts [format "%s\t%s" "TARGET_HOST" $V_TARGET_HOST_NAME ]
+puts [format "%s\t%s" "TARGET_FILE" $V_TARGET_FILE ]
+puts [format "%s\t%s" "SCP_OPTIONS" $V_SCPOPTION ]
+
+if { $V_SOURCE_OS_USER == "" && $V_TARGET_OS_USER == "" } {
+	puts "It something strage if you are going to use scp, because you did not set SOURCE_OS_USER and TARGET_OS_USER"
+	puts "Use cp if you want to copy file(s) locally"
+        exit 2
+}
+
+if { $V_SOURCE_HOST_NAME == "" &&  $V_TARGET_HOST_NAME == "" } {
+        puts "It something strage if you are going to use scp, because you did not set SOURCE_HOST_NAME and TARGET_HOST_NAME"
+	puts "Use cp if you want to copy file(s) locally"
+        exit 3
+}
+
+if {  ( $V_SOURCE_OS_USER != "" && $V_SOURCE_HOST_NAME != "" )  || ( $V_TARGET_OS_USER != "" && $V_TARGET_HOST_NAME != "" ) } {
+	puts "Ok, one or both sides defined"
+} else {
+	puts "One, or both sides undefined"
+	exit 4
+}
+
+#https://wiki.tcl-lang.org/page/exec
+if { $V_SOURCE_OS_USER != "" && $V_SOURCE_HOST_NAME != "" } {
+	set V_SCPCMD "$V_SOURCE_OS_USER@$V_SOURCE_HOST_NAME:$V_SOURCE_FILE"
+	set status [catch {exec pass show $V_PASS_PATH$V_SOURCE_OS_USER@$V_SOURCE_HOST_NAME} result]
+	if { $status == 0 } {
+		puts "Password for $V_SOURCE_OS_USER@$V_SOURCE_HOST_NAME was obtained successfully;"
+		set V_SPWD $result
+	} else {
+		puts "Can not exec: pass show $V_PASS_PATH$V_SOURCE_OS_USER@$V_SOURCE_HOST_NAME"
+		exit 5
+	}
+} else {
+	set V_SCPCMD "$V_SOURCE_FILE"
+}
+
+if { $V_TARGET_OS_USER != "" && $V_TARGET_HOST_NAME != "" } {
+	set V_SCPCMD "$V_SCPCMD $V_TARGET_OS_USER@$V_TARGET_HOST_NAME:$V_TARGET_FILE"
+        set status [catch {exec pass show $V_PASS_PATH$V_TARGET_OS_USER@$V_TARGET_HOST_NAME} result]
+        if { $status == 0 } {
+                puts "Password for $V_TARGET_OS_USER@$V_TARGET_HOST_NAME was obtained successfully;"
+		#set V_TPWD $result
+		set V_SPWD $result
+        } else {
+                puts "Can not exec: pass show $V_PASS_PATH$V_TARGET_OS_USER@$V_TARGET_HOST_NAME"
+                exit 6
+        }
+} else {
+	set V_SCPCMD "$V_SCPCMD $V_TARGET_FILE"
+}
+
+set V_SCPCMD "/usr/bin/scp $V_SCPOPTION $V_SCPCMD"
+puts "Ok, lets try to:"
+
+set timeout -1
+eval spawn $V_SCPCMD
+expect {
+	password: {exp_send "$V_SPWD\r"; exp_continue}
+}
+
+
+
