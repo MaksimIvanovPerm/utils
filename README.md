@@ -1,4 +1,12 @@
 # utils
+## backup
+It's rsync based bash-script, for incrementally updating backup of givent directory;
+It uses rsync's ability to determ (by checksum): has a given file changed or not, since the moment pf time to which backup-copy of this file belongs to;
+So, after first and full backup, of a given directory was made, all following backup-operations, of this directory and to this backup: are just updating changed files there and deliting file(s), which was|were deleted in backuped directory;
+In another words it's syncronising operations, whcih performed in incremental, fast way;
+Technically backup operation is performed by `dobackup.sh` bash-script;
+List of directories which should be backed up, options of backup operation and destination - where to backup given directory: all of this should be wroted in `execute_backups.sh` bash-script;
+For manual launching backup operation bash-alias `dobackup` is defined, in `.nashrc`
 ## escp 
 tcl-wrapper for scp-utility; 
 It uses expect for sending password to scp;
