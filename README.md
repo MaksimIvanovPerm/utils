@@ -15,4 +15,5 @@ And it usefull to define bash-alias, in your bashrc, for viewing this env-variab
 ```
 alias show_escp='env | egrep "^(SOURCE|TARGET|PASS_PATH).*" | sort -k 1 -t "="'
 ```
-2021.10.24 a bunch of bash-procedures and aliases, for making work with escp-wrapper a bit easier, were added;
+2021.10.24 a bunch of bash-procedures and bash-aliases, for making work with escp-wrapper a bit easier, were added; 
+I preferred to collect those proc and aliases to .bashrc
