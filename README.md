@@ -1,9 +1,9 @@
 # utils
 ## backup
-It's rsync-based bash-script, for incrementally updating backup of givent directory;
+It's rsync-based bash-script, for incrementally updating backup of given directory;
 
-It uses rsync's ability to determ (by checksum): has a given file changed or not, since the moment pf time to which backup-copy of this file belongs to;
-So, after first and full backup, of a given directory was made, all following backup-operations, of this directory and to this backup: are just updating changed files there and deliting file(s), which was|were deleted in backuped directory;
+It uses rsync ability to determine (by checksum): has a given file changed or not, since moment of time when it was backed up last time;
+So, after first and full backup, of a given directory, was made, all following backup-operations, of this directory and to this backup: are just updating changed files there, and deliting file(s) there, which was|were deleted in backuped directory;
 In another words it's syncronising operations, whcih performed in incremental, fast way;
 
 Technically backup operation is performed by `dobackup.sh` bash-script;
