@@ -129,7 +129,7 @@ fi
 
 output "${RSYNC} ${V_RSYNC_OPTION} ${V_WHATDIR} ${V_STORAGEDIR}"
 if [ "$V_DRYRUN" -eq "0" ]; then
-	eval "${RSYNC} ${V_RSYNC_OPTION} ${V_WHATDIR} ${V_STORAGEDIR}" | tee -a "$V_LOGFILE"
+	eval "${RSYNC} ${V_RSYNC_OPTION} \"$V_WHATDIR\" \"$V_STORAGEDIR\"" | tee -a "$V_LOGFILE"
 fi
 
 v_lines=$(cat "$V_LOGFILE" | wc -l)
