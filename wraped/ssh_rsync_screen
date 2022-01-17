@@ -1,0 +1,261 @@
+FILE2SEND="/tmp/all_tables.dmp"
+AUXDIR="$OGG_HOME/aux"; [ ! -d "$AUXDIR" ] && mkdir "$AUXDIR"
+export ATTEMPTS_LIMIT=100
+export COMPRESSION_LVL="9"
+export TRGT_USER="..."
+export TRGT_HOST="..."
+export TRGT_DIR="/tmp/dirdat/data"
+
+export BASH="/bin/bash"
+export RSYNC="/usr/bin/rsync"
+export SCREEN="/usr/bin/screen"
+export SSH="/usr/bin/ssh"
+export SSHOPTION="-q -4 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+export STATEMENTS_SCRIPT="/tmp/statements.sh"
+export SPOOL_FILE="/tmp/output.log"
+
+unset TRGT_USER_PWD
+read -p "Type password for ${TRGT_USER}@${TRGT_HOST}: " -s TRGT_USER_PWD
+
+export TRGT_USER_PWD="$TRGT_USER_PWD"
+v_cpu_count=$( cat /proc/cpuinfo | egrep "^processor.*" | wc -l )
+if [ "$v_cpu_count" -le "8" ]; then
+     DOP=1
+elif [ "$v_cpu_count" -gt "8" -a "$v_cpu_count" -le "16" ]; then
+     DOP=2
+elif [ "$v_cpu_count" -gt "16" -a "$v_cpu_count" -le "24" ]; then
+     DOP=3
+elif [ "$v_cpu_count" -gt "24" ]; then
+     DOP=4
+fi
+echo "DOP: ${DOP}; TRGT_USER_PWD: $TRGT_USER_PWD"
+############################################################################################
+
+ping -c 3 -q -s 1024 ${TRGT_HOST} &> /dev/null
+if [ "$?" -eq "0" ]; then
+   echo "OK: remote host ${TRGT_HOST} is available"
+   find $AUXDIR -type f -name 'aux*' -delete
+   mv -v "$FILE2SEND" "$AUXDIR"
+   FILE2SEND=$(basename "$FILE2SEND"); FILE2SEND="${AUXDIR}/${FILE2SEND}"
+   split --verbose --bytes=128M -d "$FILE2SEND" "$AUXDIR/aux"
+   #time find "$AUXDIR" -type f -name 'aux*' | awk -v dp="$DOP" '{x=NR%dp; printf "%d %s\n", x, $0;}' | xargs -n 1 -P "$DOP" -d "\n" -I {} bash -c screen_routine\ \"\{\}\"
+   v_count=0
+   v_start_ts=$(date +%s)
+   for i in $( find $AUXDIR -type f -name 'aux*' ); do
+       echo "$v_count $i"
+       nohup bash -c "screen_routine \"${v_count} ${i}\"" &
+       v_count=$((v_count+1))
+       if [ "$v_count" -ge "$DOP" ]; then
+          v_count="0"
+          wait
+       fi
+   done
+   v_stop_ts=$(date +%s)
+   echo "${v_stop_ts} - ${v_start_ts}" | bc -l
+else
+   echo "ERR: remote host ${TRGT_HOST} is not available"
+fi
+
+sshwrap -q -s "ls -lthr $TRGT_DIR"
+sshwrap -q -s "cat $TRGT_DIR/aux* > $TRGT_DIR/all_tables.dmp"
+sshwrap -q -s "md5sum $TRGT_DIR/all_tables.dmp"
+md5sum $FILE2SEND
+sshwrap -q -s "find $TRGT_DIR -type f -name 'aux*' -delete"
+
+while read i
+do
+    echo "$i"
+    $SCREEN -S ${i} -X quit
+done < <( screen -ls | grep auxiliary_screen | awk '{print $1;}' )
+#########################################################################################
+
+screen_routine() {
+local v_arg="$1"
+local v_wnum=$(echo -n "$v_arg" | cut -f 1 -d " ")
+local v_file=$(echo -n "$v_arg" | cut -f 2 -d " ")
+local v_screenname="auxiliary_screen" v_rc v_spid v_count
+local v_attempts_limit="50"
+
+if [ -z "$BASH" -o -z "$STATEMENTS_SCRIPT" -o -z "$TRGT_USER_PWD" -o -z "$TRGT_USER" -o -z "$TRGT_HOST" -o -z "$TRGT_DIR" -a -z "$SCREEN" -o -z "$SSH" -o -z "$RSYNC" ]; then
+   echo "Err, Some or all crucial env-variable(s) is|are empty"
+   return 1
+fi
+
+if [ ! -z "$v_wnum" -a -f "$v_file" ]; then
+   v_screenname="${v_screenname}_${v_wnum}"
+   screen -ls | grep -q "${v_screenname}"
+   if [ "$?" -eq "0" ]; then
+      echo "By some reason screen-session ${v_screenname} already is;"
+      return 1
+   fi
+
+   $SCREEN -mdS "${v_screenname}" "$RSYNC" -q -c --inplace --partial -4 -z --compress-level="$COMPRESSION_LVL" "$v_file" ${TRGT_USER}@${TRGT_HOST}:${TRGT_DIR}
+   screen -ls | grep -q "${v_screenname}"
+   if [ "$?" -ne "0" ]; then
+      echo "By some reason screen-session ${v_screenname} has not been created;"
+      return 2
+   fi
+
+   v_spid=$( screen -ls | grep "${v_screenname}" | cut -f 1 -d "." | tr -d [:space:] | tr -d [:cntrl:] )
+   echo "OK: ${v_screenname} created with pid: ${v_spid}"
+   pstree -aAc -p "$v_spid" | grep -q "ssh"
+   v_rc="$?"
+   v_count=0
+   echo "Try to wait ssh, v_rc: ${v_rc}; v_count: ${v_count}"
+   while [ "$v_rc" -ne "0" -a "$v_count" -lt "$v_attempts_limit" ]; do
+         sleep 0.1
+         pstree -aAc -p "$v_spid" | grep -q "ssh"
+         v_rc="$?"
+         v_count=$((v_count+1))
+         echo "Try to wait ssh, v_rc: ${v_rc}; v_count: ${v_count}"
+   done
+   if [ "$v_rc" -ne "0" ]; then
+      $SCREEN -S ${v_screenname} -X quit 1>/dev/null 2>&1
+      echo "Screen-sessions was created. But rsync did not launch ssh-layer; Exit"
+      return 3
+   fi
+   sleep 2
+   echo "OK, ssh appeared, try to send password to it"
+   $SCREEN -S "${v_screenname}" -p 0 -X stuff "${TRGT_USER_PWD}$(echo -ne '\015')"
+   screen -ls | grep -q "${v_screenname}"
+   v_rc="$?"
+   while [ "$v_rc" -eq "0" ]; do
+         sleep 2
+         screen -ls | grep -q "${v_screenname}"
+         v_rc="$?"
+   done
+   #$SCREEN -S ${v_screenname} -X quit
+   #screen -S ${v_screenname} -X screen -t myWinName2 #creating additional windows
+else
+   echo "Worker number and/or file name is/are incorrect or unsetted"
+fi
+}
+export -f screen_routine
+
+ssh_routine() {
+local v_screenname="ssh_routine"
+local v_statement v_spid v_rc v_count v_ssh_pid
+local v_attempts_limit="50"
+local v_quiet="${1}"
+
+if [ -z "$BASH" -o -z "$STATEMENTS_SCRIPT" -o -z "$TRGT_USER_PWD" -o -z "$TRGT_USER" -o -z "$TRGT_HOST" -o -z "$SSH" ]; then
+   echo "Err, Some or all crucial env-variable(s) is|are empty"
+   return 1
+fi
+
+if [ "$ATTEMPTS_LIMIT" -gt "$v_attempts_limit" ]; then
+   v_attempts_limit="$ATTEMPTS_LIMIT"
+fi
+
+if [ ! -f "$STATEMENTS_SCRIPT" ]; then
+   echo "Err, there is not file: ${STATEMENTS_SCRIPT}"
+   return 1
+fi
+
+# 0 - verbose; 1 - quietly
+[ -z "$v_quiet" ] && v_quiet="0"
+
+screen -ls | grep -q "${v_screenname}"
+v_rc="$?"
+if [ "$v_rc" -eq "0" ]; then
+   echo "Err, somehow there already is screen-session ${v_screenname}"
+   return 2
+fi
+
+$SCREEN -mdS "${v_screenname}"
+v_spid=$( screen -ls | grep "${v_screenname}" | cut -f 1 -d "." | tr -d [:space:] | tr -d [:cntrl:] )
+cat /dev/null > $SPOOL_FILE
+$SCREEN -S "${v_screenname}" -p 0 -X stuff "$BASH $STATEMENTS_SCRIPT$(echo -ne '\015')"
+pstree -aAc -p "$v_spid" | grep -q "ssh"
+v_rc="$?"
+v_count=0
+[ "$v_quiet" -eq "0" ] && echo "Try to wait ssh, v_rc: ${v_rc}; v_count: ${v_count}"
+while [ "$v_rc" -ne "0" -a "$v_count" -lt "$v_attempts_limit" ]; do
+      sleep 0.1
+      pstree -aAc -p "$v_spid" | grep -q "ssh"
+      v_rc="$?"
+      v_count=$((v_count+1))
+      [ "$v_quiet" -eq "0" ] && echo "Try to wait ssh, v_rc: ${v_rc}; v_count: ${v_count}"
+done
+if [ "$v_rc" -ne "0" -a "$v_count" -ge "$v_attempts_limit" ]; then
+   echo "Err, ssh have not appeared, exiting with fail"
+   $SCREEN -S ${v_screenname} -X quit
+   return 3
+fi
+
+v_ssh_pid=$( pstree -aAc -p "$v_spid" | egrep -o "ssh,[0-9]+" | cut -f 2 -d "," | tr -d [:space:] | tr -d [:cntrl:] )
+lsof -p "$v_ssh_pid" | grep -q "/dev/tty"
+v_rc="$?"
+v_count=0
+[ "$v_quiet" -eq "0" ] && echo "Try to wait when ssh sets /dev/tty, v_rc: ${v_rc}; v_count: ${v_count}"
+while [ "$v_rc" -ne "0" -a "$v_count" -lt "$v_attempts_limit" ]; do
+      sleep 0.2
+      lsof -p $v_ssh_pid | grep -q "/dev/tty"
+      v_rc="$?"
+      v_count=$((v_count+1))
+      [ "$v_quiet" -eq "0" ] && echo "Try to wait when ssh sets /dev/tty, v_rc: ${v_rc}; v_count: ${v_count}"
+done
+if [ "$v_rc" -ne "0" -a "$v_count" -ge "$v_attempts_limit" ]; then
+   echo "Err, somehow ssh has not established /dev/tty and has not started to wait password input"
+   $SCREEN -S ${v_screenname} -X quit
+   return 4
+fi
+
+$SCREEN -S "${v_screenname}" -p 0 -X stuff "${TRGT_USER_PWD}$(echo -ne '\015')"
+pstree -aAc -p "$v_spid" | grep -q "$v_ssh_pid"
+v_rc="$?"
+v_count=0
+[ "$v_quiet" -eq "0" ] && echo "Try to wait when ssh will end work, v_rc: ${v_rc}; v_count: ${v_count}"
+while [ "$v_rc" -eq "0" -a "$v_count" -lt "$v_attempts_limit" ]; do
+      sleep 0.5
+      pstree -aAc -p "$v_spid" | grep -q "$v_ssh_pid"
+      v_rc="$?"
+      v_count=$((v_count+1))
+      [ "$v_quiet" -eq "0" ] && echo "Try to wait when ssh will end work, v_rc: ${v_rc}; v_count: ${v_count}"
+done
+if [ "$v_rc" -eq "0" -a "$v_count" -ge "$v_attempts_limit" ]; then
+   echo "Err, remote site processes statement too long"
+   $SCREEN -S ${v_screenname} -X quit
+   return 5
+fi
+
+$SCREEN -S ${v_screenname} -X quit
+cat $SPOOL_FILE | awk -v rmt="${TRGT_USER}@${TRGT_HOST}" '{printf "%s:\t%s\n", rmt, $0}'
+}
+
+usage() {
+cat << __EOF__
+-h|--help       this help
+-q|--quiet      Silent mode
+-s|--statement  What to do
+__EOF__
+}
+
+sshwrap() {
+local v_cmd v_quiet="0"
+
+while [ ! -z "$1" ]; do
+    case "$1" in
+         -h|--help) usage; return 0
+         ;;
+         -s|--statement) shift; v_cmd="$1"
+         ;;
+         -q|--quiet) v_quiet="1"
+         ;;
+         *) echo "Unsupported option: ${1}; Use -h|--help for obtaining help"; return 1
+         ;;
+    esac
+    shift
+done
+
+if [ -z "$v_cmd" ]; then
+   echo "Err, you did not set what to do; Use -h|--help for obtaining help"
+   return 1
+fi
+
+cat << __EOF__ > "$STATEMENTS_SCRIPT"
+$SSH $SSHOPTION ${TRGT_USER}@${TRGT_HOST} "$v_cmd" > "$SPOOL_FILE"
+__EOF__
+cat "$STATEMENTS_SCRIPT"
+ssh_routine "$v_quiet"
+}
