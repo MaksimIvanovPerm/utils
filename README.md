@@ -20,14 +20,15 @@ SOURCE_HOST_NAME=
 SOURCE_OS_USER=
 TARGET_FILE=
 TARGET_HOST_NAME=
-TARGET_OS_USER=```
+TARGET_OS_USER=
+```
 And it usefull to define bash-alias, in your bashrc, for viewing this env-variable and their values:
 ```
 alias show_escp='env | egrep "^(SOURCE|TARGET|PASS_PATH).*" | sort -k 1 -t "="'
 ```
 2021.10.24 a bunch of bash-procedures and bash-aliases, for making work with escp-wrapper a bit easier, were added; 
-I preferred to collect those proc and aliases to .bashrc
+I preferred to collect those proc and aliases to `.bashrc`
 ## wrap
-Bunh of Bash-functions, where, with help of screen-ability to work with detached screen-session, work with ssh|rsync utils is scripted;
-Espetially: scripted process of providing ssh|rsync with password;
+Bunch of bash-functions, where, with help of screen-ability to work with detached screen-session, work with ssh|rsync utils is scripted;
+Most valuable there - it scripts process of providing ssh|rsync with password;
 So when you aren't able to install expect and|or it too hard to use python-subprocess module: screen could be kind of rescue;
